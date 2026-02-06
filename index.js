@@ -1,10 +1,34 @@
+// ===== Imports =====
+require("dotenv").config();
+
+const express = require("express");
+const axios = require("axios");
+const { parseStringPromise } = require("xml2js");
+
+// ===== App Setup =====
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// ===== Debug ENV =====
+console.log("ENV CHECK:");
+console.log("DB_CLIENT_ID:", process.env.DB_CLIENT_ID);
+console.log(
+  "DB_CLIENT_SECRET vorhanden:",
+  Boolean(process.env.DB_CLIENT_SECRET)
+);
+
+// ===== Health Check =====
+app.get("/health", (req, res) => {
+  res.json({ status: "ok" });
+});
+
+// ===== S-Bahn API =====
 app.get("/api/sbahn", async (req, res) => {
   try {
-    const EVA = "8002063";
-
+    const EVA = "8002063"; // Feldkirchen (b München)
     const now = new Date();
 
-    // wir probieren: aktuelle Stunde + nächste Stunde
+    // aktuelle + nächste Stunde probieren
     for (let offset = 0; offset <= 1; offset++) {
       const d = new Date(now.getTime() + offset * 60 * 60 * 1000);
 
@@ -32,7 +56,7 @@ app.get("/api/sbahn", async (req, res) => {
         const departures = parsed?.timetable?.dp || [];
 
         const s2 = departures.find(
-          (d) => d?.tl?.[0]?.$?.c === "S2"
+          (dep) => dep?.tl?.[0]?.$?.c === "S2"
         );
 
         if (s2) {
@@ -43,14 +67,15 @@ app.get("/api/sbahn", async (req, res) => {
             plannedTime: s2.dpTime?.[0] || "??",
           });
         }
-      } catch (e) {
-        // 404 ignorieren → nächste Stunde probieren
-        if (e.response?.status !== 404) {
-          throw e;
+      } catch (err) {
+        // 404 = keine Daten für diese Stunde → weiter
+        if (err.response?.status !== 404) {
+          throw err;
         }
       }
     }
 
+    // keine S2 gefunden
     res.json({
       station: "Feldkirchen (b München)",
       message: "Keine S2 in nächster Zeit gefunden",
@@ -62,4 +87,9 @@ app.get("/api/sbahn", async (req, res) => {
       details: error.message,
     });
   }
+});
+
+// ===== Server Start =====
+app.listen(PORT, () => {
+  console.log(`Mini-Service läuft auf Port ${PORT}`);
 });
