@@ -1,7 +1,7 @@
 // ===============================
 // Smart Home Mini Service
-// SERVER → MVG fib v2 (ROBUST)
-// S2 Feldkirchen (b München)
+// SERVER → MVG fib v2
+// ABSOLUT ROBUST (alle bekannten Formate)
 // ===============================
 
 const express = require("express");
@@ -32,20 +32,39 @@ app.get("/api/sbahn", async (req, res) => {
       "&transportTypes=SBAHN";
 
     const response = await axios.get(url, { timeout: 10000 });
-
-    // ---------- ROBUSTES FORMAT ----------
     const raw = response.data;
-    const departures =
-      raw?.departures ||
-      raw?.data?.departures;
 
+    let departures = [];
+
+    // 🟢 FALL 1: direktes Array
+    if (Array.isArray(raw)) {
+      // Array mit departures-Objekten oder direkt Abfahrten
+      if (raw[0]?.departures) {
+        departures = raw[0].departures;
+      } else {
+        departures = raw;
+      }
+    }
+
+    // 🟢 FALL 2: Objekt mit departures
+    else if (Array.isArray(raw?.departures)) {
+      departures = raw.departures;
+    }
+
+    // 🟢 FALL 3: Objekt mit data.departures
+    else if (Array.isArray(raw?.data?.departures)) {
+      departures = raw.data.departures;
+    }
+
+    // ❌ Unbekannt (sollte jetzt nicht mehr vorkommen)
     if (!Array.isArray(departures)) {
       return res.status(500).json({
-        error: "Unerwartetes MVG-Format",
-        keys: Object.keys(raw || {}),
+        error: "Unbekanntes MVG-Format (final)",
+        rawType: typeof raw,
       });
     }
 
+    // ---------- FILTERN ----------
     let erding = [];
     let dachau = [];
     const now = Date.now();
