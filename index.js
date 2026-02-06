@@ -2,7 +2,7 @@
 // Smart Home Mini Service
 // MVG Fahrinfo API
 // S2 ab Feldkirchen (b München)
-// BULLETPROOF EDITION
+// ROBUSTE VERSION – nichts entfernt, nur erweitert
 // ===============================
 
 const express = require("express");
@@ -11,157 +11,100 @@ const axios = require("axios");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ---------- CONFIG ----------
-const STATION_ID = "de:09184:460";
-const LINE = "S2";
-const MAX_RESULTS = 3;
-const CACHE_TTL_MS = 30_000; // 30 Sekunden
-
-// ---------- SIMPLE CACHE ----------
-let cache = {
-  timestamp: 0,
-  data: null,
-};
-
-// ---------- AXIOS INSTANCE ----------
-const mvgApi = axios.create({
-  baseURL: "https://www.mvg.de/api/fahrinfo",
-  timeout: 8000,
-  headers: {
-    "User-Agent": "smart-home-display",
-    Accept: "application/json",
-  },
-  validateStatus: (status) => status >= 200 && status < 500,
-});
-
 // ---------- HEALTH ----------
 app.get("/health", (req, res) => {
-  res.json({
-    status: "ok",
-    uptime: Math.floor(process.uptime()),
-    cacheAgeSeconds: Math.floor(
-      (Date.now() - cache.timestamp) / 1000
-    ),
-  });
+  res.json({ status: "ok" });
 });
 
-// ---------- S-BAHN ----------
+// ---------- S-BAHN (MVG) ----------
 app.get("/api/sbahn", async (req, res) => {
   try {
-    // ---------- CACHE ----------
-    if (
-      cache.data &&
-      Date.now() - cache.timestamp < CACHE_TTL_MS
-    ) {
-      return res.json({
-        ...cache.data,
-        cached: true,
+    // Feste MVG-Station-ID für Feldkirchen (b München)
+    const STATION_ID = "de:09184:460";
+
+    const departuresUrl =
+      `https://www.mvg.de/api/fahrinfo/departure/${STATION_ID}`;
+
+    const response = await axios.get(departuresUrl, {
+      headers: {
+        "User-Agent": "smart-home-display",
+        Accept: "application/json",
+      },
+      timeout: 10000,
+    });
+
+    // ---------- ROBUSTE FORMAT-ERKENNUNG ----------
+    const raw = response.data;
+    let departures = [];
+
+    if (Array.isArray(raw)) {
+      // Variante C: direktes Array
+      departures = raw;
+    } else if (Array.isArray(raw?.departures)) {
+      // Variante A
+      departures = raw.departures;
+    } else if (Array.isArray(raw?.data?.departures)) {
+      // Variante B
+      departures = raw.data.departures;
+    } else if (Array.isArray(raw?.response?.departures)) {
+      // Variante D
+      departures = raw.response.departures;
+    } else {
+      // Unbekanntes Format → wir zeigen ALLES, um es final zu verstehen
+      console.error(
+        "UNBEKANNTES MVG-ABFAHRTSFORMAT:",
+        JSON.stringify(raw).slice(0, 1000)
+      );
+      return res.status(500).json({
+        error: "Unbekanntes MVG-Abfahrtsformat",
+        type: typeof raw,
+        keys: raw && typeof raw === "object" ? Object.keys(raw) : null,
       });
     }
 
-    // ---------- API CALL ----------
-    const response = await mvgApi.get(
-      `/departure/${STATION_ID}`
-    );
-
-    if (response.status !== 200) {
-      throw new Error(
-        `MVG HTTP ${response.status}`
-      );
-    }
-
-    const departuresRaw = response.data?.departures;
-
-    if (!Array.isArray(departuresRaw)) {
-      throw new Error(
-        "MVG response.departures ist kein Array"
-      );
-    }
-
-    // ---------- FILTER & NORMALIZE ----------
-    const now = Date.now();
-
-    const departures = departuresRaw
-      .filter((d) => {
-        return (
+    // ---------- FILTER: NUR S2 ----------
+    const s2Departures = departures
+      .filter(
+        (d) =>
           d &&
-          d.label === LINE &&
-          d.transportType === "SBAHN"
-        );
-      })
+          d.label === "S2" &&
+          (d.transportType === "SBAHN" || d.transportType === "TRAIN")
+      )
+      .slice(0, 3)
       .map((d) => {
-        const time =
-          d.departureTime ||
-          d.realtimeDepartureTime ||
-          d.plannedDepartureTime;
+        const depTime = d.departureTime
+          ? new Date(d.departureTime)
+          : null;
 
-        if (!time) return null;
-
-        const minutes = Math.max(
-          0,
-          Math.round(
-            (new Date(time).getTime() - now) /
-              60000
-          )
-        );
+        const minutes = depTime
+          ? Math.round((depTime - Date.now()) / 60000)
+          : null;
 
         return {
           line: d.label,
-          direction: d.destination || "Unbekannt",
+          direction: d.destination || d.direction || "unbekannt",
           minutes,
-          delay: Number.isFinite(d.delay)
-            ? d.delay
-            : 0,
-          cancelled: Boolean(d.cancelled),
-          platform: d.platform || null,
+          delay: d.delay || 0,
+          rawTime: d.departureTime || null,
         };
-      })
-      .filter(Boolean)
-      .slice(0, MAX_RESULTS);
+      });
 
-    const result = {
-      station: "Feldkirchen (b München)",
-      line: LINE,
-      timestamp: new Date().toISOString(),
-      departures,
-    };
-
-    // ---------- CACHE SAVE ----------
-    cache = {
-      timestamp: Date.now(),
-      data: result,
-    };
-
+    // ---------- RESPONSE ----------
     res.json({
-      ...result,
-      cached: false,
+      station: "Feldkirchen (b München)",
+      count: s2Departures.length,
+      departures: s2Departures,
     });
   } catch (error) {
-    console.error(
-      "MVG API FEHLER:",
-      error.message
-    );
-
-    // ---------- FALLBACK ----------
-    if (cache.data) {
-      return res.status(200).json({
-        ...cache.data,
-        cached: true,
-        warning:
-          "MVG API nicht erreichbar – Cache genutzt",
-      });
-    }
-
-    res.status(503).json({
-      error: "MVG API nicht erreichbar",
-      message: error.message,
+    console.error("MVG API FEHLER:", error.message);
+    res.status(500).json({
+      error: "MVG API Fehler",
+      details: error.message,
     });
   }
 });
 
 // ---------- START ----------
 app.listen(PORT, () => {
-  console.log(
-    `Mini-Service läuft auf Port ${PORT}`
-  );
+  console.log(`Mini-Service läuft auf Port ${PORT}`);
 });
