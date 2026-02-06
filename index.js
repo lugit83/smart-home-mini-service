@@ -1,8 +1,8 @@
 // ===============================
 // Smart Home Mini Service
-// MVG (inoffizielle) Fahrinfo API
-// Ziel: S2 ab Feldkirchen (b München)
-// Robust gegen wechselnde MVG-Formate
+// MVG Fahrinfo API
+// S2 ab Feldkirchen (b München)
+// STABIL: ohne Stationssuche
 // ===============================
 
 const express = require("express");
@@ -19,11 +19,13 @@ app.get("/health", (req, res) => {
 // ---------- S-BAHN (MVG) ----------
 app.get("/api/sbahn", async (req, res) => {
   try {
-    // 1️⃣ Station suchen → Feldkirchen
-    const searchUrl =
-      "https://www.mvg.de/api/fahrinfo/location/queryWeb?q=Feldkirchen";
+    // Feldkirchen (b München) – feste MVG Station-ID
+    const STATION_ID = "de:09184:460";
 
-    const searchResponse = await axios.get(searchUrl, {
+    const departuresUrl =
+      `https://www.mvg.de/api/fahrinfo/departure/${STATION_ID}`;
+
+    const response = await axios.get(departuresUrl, {
       headers: {
         "User-Agent": "smart-home-display",
         Accept: "application/json",
@@ -31,49 +33,7 @@ app.get("/api/sbahn", async (req, res) => {
       timeout: 10000,
     });
 
-    const data = searchResponse.data;
-
-    // MVG liefert wechselnde Strukturen
-    const locations =
-      data.locations ||
-      data.suggestedLocations ||
-      [];
-
-    if (!Array.isArray(locations) || locations.length === 0) {
-      return res.status(500).json({
-        error: "Keine Locations von MVG erhalten",
-        raw: Object.keys(data),
-      });
-    }
-
-    // Feldkirchen (b München) finden
-    const station = locations.find(
-      (l) =>
-        l.type === "STATION" &&
-        l.name &&
-        l.name.includes("Feldkirchen")
-    );
-
-    if (!station || !station.globalId) {
-      return res.status(404).json({
-        error: "Station Feldkirchen (b München) nicht gefunden",
-      });
-    }
-
-    const stationId = station.globalId;
-
-    // 2️⃣ Abfahrten holen
-    const departuresUrl = `https://www.mvg.de/api/fahrinfo/departure/${stationId}`;
-
-    const depResponse = await axios.get(departuresUrl, {
-      headers: {
-        "User-Agent": "smart-home-display",
-        Accept: "application/json",
-      },
-      timeout: 10000,
-    });
-
-    const departures = depResponse.data?.departures;
+    const departures = response.data?.departures;
 
     if (!Array.isArray(departures)) {
       return res.status(500).json({
@@ -81,7 +41,6 @@ app.get("/api/sbahn", async (req, res) => {
       });
     }
 
-    // 3️⃣ Nur S2 filtern
     const s2Departures = departures
       .filter(
         (d) =>
