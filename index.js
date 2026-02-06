@@ -30,7 +30,13 @@ app.get("/api/sbahn", async (req, res) => {
       timeout: 10000,
     });
 
-    const locations = searchResponse.data;
+    const locations = searchResponse.data.locations;
+
+    if (!Array.isArray(locations)) {
+      return res.status(500).json({
+        error: "Unerwartetes MVG-Suchformat",
+      });
+    }
 
     // Feldkirchen (b München) finden
     const station = locations.find(
@@ -58,7 +64,13 @@ app.get("/api/sbahn", async (req, res) => {
       timeout: 10000,
     });
 
-    const departures = depResponse.data.departures || [];
+    const departures = depResponse.data.departures;
+
+    if (!Array.isArray(departures)) {
+      return res.status(500).json({
+        error: "Unerwartetes MVG-Abfahrtsformat",
+      });
+    }
 
     // 3️⃣ Nur S2 filtern
     const s2Departures = departures
