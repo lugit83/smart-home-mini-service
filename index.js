@@ -39,7 +39,7 @@ app.get("/api/sbahn", async (req, res) => {
 
     const hour = String(now.getHours()).padStart(2, "0");
 
-    const url = `https://api.deutschebahn.com/timetables/v1/plan/${EVA}/${date}/${hour}`;
+    const url = `https://apis.deutschebahn.com/timetables/v1/plan/${EVA}/${date}/${hour}`;
     console.log("DB REQUEST URL:", url);
 
     const response = await axios.get(url, {
