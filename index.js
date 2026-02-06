@@ -2,6 +2,7 @@
 // Smart Home Mini Service
 // MVG (inoffizielle) Fahrinfo API
 // Ziel: S2 ab Feldkirchen (b München)
+// Robust gegen wechselnde MVG-Formate
 // ===============================
 
 const express = require("express");
@@ -30,11 +31,18 @@ app.get("/api/sbahn", async (req, res) => {
       timeout: 10000,
     });
 
-    const locations = searchResponse.data.locations;
+    const data = searchResponse.data;
 
-    if (!Array.isArray(locations)) {
+    // MVG liefert wechselnde Strukturen
+    const locations =
+      data.locations ||
+      data.suggestedLocations ||
+      [];
+
+    if (!Array.isArray(locations) || locations.length === 0) {
       return res.status(500).json({
-        error: "Unerwartetes MVG-Suchformat",
+        error: "Keine Locations von MVG erhalten",
+        raw: Object.keys(data),
       });
     }
 
@@ -42,12 +50,13 @@ app.get("/api/sbahn", async (req, res) => {
     const station = locations.find(
       (l) =>
         l.type === "STATION" &&
+        l.name &&
         l.name.includes("Feldkirchen")
     );
 
-    if (!station) {
+    if (!station || !station.globalId) {
       return res.status(404).json({
-        error: "Station Feldkirchen nicht gefunden",
+        error: "Station Feldkirchen (b München) nicht gefunden",
       });
     }
 
@@ -64,7 +73,7 @@ app.get("/api/sbahn", async (req, res) => {
       timeout: 10000,
     });
 
-    const departures = depResponse.data.departures;
+    const departures = depResponse.data?.departures;
 
     if (!Array.isArray(departures)) {
       return res.status(500).json({
