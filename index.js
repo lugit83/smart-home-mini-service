@@ -1,9 +1,7 @@
 // ===============================
 // Smart Home Mini Service
-// ESP32 → Server Gateway
-// S-Bahn Daten-Cache
-// BASIS: letzter Stand
-// ERWEITERT: POST /api/sbahn/update
+// SERVER → MVG fib v2
+// S2 Feldkirchen (b München)
 // ===============================
 
 const express = require("express");
@@ -12,66 +10,93 @@ const axios = require("axios");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ---------- JSON BODY PARSER ----------
+// ---------- JSON ----------
 app.use(express.json());
 
-// ---------- IN-MEMORY CACHE ----------
-let sbahnCache = {
-  station: "Feldkirchen (b München)",
-  updatedAt: null,
-  departures: [],
-};
+// ---------- CONFIG ----------
+const STATION_NAME = "Feldkirchen (b München)";
+const GLOBAL_ID = "de:09184:2110";
 
 // ---------- HEALTH ----------
 app.get("/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
-// ---------- ESP → SERVER UPDATE ----------
-app.post("/api/sbahn/update", (req, res) => {
+// ---------- S-BAHN (SERVER → MVG) ----------
+app.get("/api/sbahn", async (req, res) => {
   try {
-    const payload = req.body;
+    const url =
+      "https://www.mvg.de/api/fib/v2/departure" +
+      `?globalId=${GLOBAL_ID}` +
+      "&limit=20" +
+      "&offsetInMinutes=0" +
+      "&transportTypes=SBAHN";
 
-    if (
-      !payload ||
-      !payload.station ||
-      !Array.isArray(payload.departures)
-    ) {
-      return res.status(400).json({
-        error: "Ungültiges Payload",
+    const response = await axios.get(url, {
+      timeout: 10000,
+    });
+
+    const departures = response.data?.departures;
+    if (!Array.isArray(departures)) {
+      return res.status(500).json({
+        error: "Unerwartetes MVG-Format",
       });
     }
 
-    sbahnCache = {
-      station: payload.station,
-      departures: payload.departures,
-      updatedAt: new Date().toISOString(),
-    };
+    let erding = [];
+    let dachau = [];
 
-    console.log("S-BAHN UPDATE VOM ESP:", sbahnCache);
+    const now = Date.now();
+
+    for (const d of departures) {
+      if (d.label !== "S2") continue;
+
+      const destination = d.destination || "";
+      const realTime = d.realDepartureTime;
+      if (!realTime) continue;
+
+      const minutes = Math.round((realTime - now) / 60000);
+      if (minutes < 0) continue;
+
+      const entry = {
+        line: "S2",
+        direction: destination,
+        minutes,
+        delay: 0, // fib v2 → Delay später berechenbar
+      };
+
+      if (
+        destination.includes("Erding") &&
+        erding.length < 2
+      ) {
+        erding.push(entry);
+      }
+
+      if (
+        (destination.includes("Dachau") ||
+          destination.includes("Petershausen")) &&
+        dachau.length < 2
+      ) {
+        dachau.push(entry);
+      }
+
+      if (erding.length >= 2 && dachau.length >= 2) {
+        break;
+      }
+    }
 
     res.json({
-      status: "ok",
-      received: sbahnCache.departures.length,
+      station: STATION_NAME,
+      departures: [...erding, ...dachau],
+      updatedAt: new Date().toISOString(),
     });
-  } catch (error) {
-    console.error("UPDATE FEHLER:", error.message);
+  } catch (err) {
+    console.error("MVG SERVER FEHLER:", err.message);
     res.status(500).json({
-      error: "Update fehlgeschlagen",
+      error: "MVG Server Fehler",
+      details: err.message,
     });
   }
-});
-
-// ---------- CLIENT → SERVER READ ----------
-app.get("/api/sbahn", (req, res) => {
-  res.json({
-    ...sbahnCache,
-    ageSeconds: sbahnCache.updatedAt
-      ? Math.round(
-          (Date.now() - new Date(sbahnCache.updatedAt)) / 1000
-        )
-      : null,
-  });
 });
 
 // ---------- START ----------
