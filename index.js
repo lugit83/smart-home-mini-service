@@ -1,6 +1,6 @@
 // ===============================
 // Smart Home Mini Service
-// SERVER → MVG fib v2
+// SERVER → MVG fib v2 (ROBUST)
 // S2 Feldkirchen (b München)
 // ===============================
 
@@ -10,7 +10,6 @@ const axios = require("axios");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ---------- JSON ----------
 app.use(express.json());
 
 // ---------- CONFIG ----------
@@ -22,7 +21,7 @@ app.get("/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
-// ---------- S-BAHN (SERVER → MVG) ----------
+// ---------- S-BAHN ----------
 app.get("/api/sbahn", async (req, res) => {
   try {
     const url =
@@ -32,57 +31,55 @@ app.get("/api/sbahn", async (req, res) => {
       "&offsetInMinutes=0" +
       "&transportTypes=SBAHN";
 
-    const response = await axios.get(url, {
-      timeout: 10000,
-    });
+    const response = await axios.get(url, { timeout: 10000 });
 
-    const departures = response.data?.departures;
+    // ---------- ROBUSTES FORMAT ----------
+    const raw = response.data;
+    const departures =
+      raw?.departures ||
+      raw?.data?.departures;
+
     if (!Array.isArray(departures)) {
       return res.status(500).json({
         error: "Unerwartetes MVG-Format",
+        keys: Object.keys(raw || {}),
       });
     }
 
     let erding = [];
     let dachau = [];
-
     const now = Date.now();
 
     for (const d of departures) {
       if (d.label !== "S2") continue;
 
-      const destination = d.destination || "";
-      const realTime = d.realDepartureTime;
-      if (!realTime) continue;
+      const dest = d.destination || "";
+      const real = d.realDepartureTime;
+      if (!real) continue;
 
-      const minutes = Math.round((realTime - now) / 60000);
+      const minutes = Math.round((real - now) / 60000);
       if (minutes < 0) continue;
 
       const entry = {
         line: "S2",
-        direction: destination,
+        direction: dest,
         minutes,
-        delay: 0, // fib v2 → Delay später berechenbar
+        delay: 0,
       };
 
-      if (
-        destination.includes("Erding") &&
-        erding.length < 2
-      ) {
+      if (dest.includes("Erding") && erding.length < 2) {
         erding.push(entry);
       }
 
       if (
-        (destination.includes("Dachau") ||
-          destination.includes("Petershausen")) &&
+        (dest.includes("Dachau") ||
+          dest.includes("Petershausen")) &&
         dachau.length < 2
       ) {
         dachau.push(entry);
       }
 
-      if (erding.length >= 2 && dachau.length >= 2) {
-        break;
-      }
+      if (erding.length >= 2 && dachau.length >= 2) break;
     }
 
     res.json({
