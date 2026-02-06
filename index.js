@@ -1,89 +1,65 @@
-/**
- * Smart Home Mini Service
- * DB Timetables API – Feldkirchen (b München), S2
- * FINAL & GEPRÜFT
- */
-
-require("dotenv").config();
-
-const express = require("express");
-const axios = require("axios");
-const { parseStringPromise } = require("xml2js");
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-// ========= ENV CHECK =========
-console.log("ENV CHECK:");
-console.log("DB_CLIENT_ID:", process.env.DB_CLIENT_ID);
-console.log(
-  "DB_CLIENT_SECRET vorhanden:",
-  Boolean(process.env.DB_CLIENT_SECRET)
-);
-
-// ========= HEALTH =========
-app.get("/health", (req, res) => {
-  res.json({ status: "ok" });
-});
-
-// ========= S-BAHN =========
 app.get("/api/sbahn", async (req, res) => {
   try {
-    const EVA = "8002063"; // Feldkirchen (b München)
+    const EVA = "8002063";
 
     const now = new Date();
-    const date =
-      now.getFullYear().toString() +
-      String(now.getMonth() + 1).padStart(2, "0") +
-      String(now.getDate()).padStart(2, "0");
 
-    const hour = String(now.getHours()).padStart(2, "0");
+    // wir probieren: aktuelle Stunde + nächste Stunde
+    for (let offset = 0; offset <= 1; offset++) {
+      const d = new Date(now.getTime() + offset * 60 * 60 * 1000);
 
-    const url = `https://apis.deutschebahn.com/timetables/v1/plan/${EVA}/${date}/${hour}`;
-    console.log("DB REQUEST URL:", url);
+      const date =
+        d.getFullYear().toString() +
+        String(d.getMonth() + 1).padStart(2, "0") +
+        String(d.getDate()).padStart(2, "0");
 
-    const response = await axios.get(url, {
-      headers: {
-        "DB-Client-Id": process.env.DB_CLIENT_ID,
-        "DB-Client-Secret": process.env.DB_CLIENT_SECRET,
-        "User-Agent": "smart-home-mini-service/1.0", // 🔴 EXTREM WICHTIG
-        Accept: "application/xml",
-      },
-      timeout: 15000,
-    });
+      const hour = String(d.getHours()).padStart(2, "0");
 
-    const parsed = await parseStringPromise(response.data);
-    const departures = parsed?.timetable?.dp || [];
+      const url = `https://apis.deutschebahn.com/db-api-marketplace/apis/timetables/v1/plan/${EVA}/${date}/${hour}`;
+      console.log("DB REQUEST URL:", url);
 
-    const s2 = departures.find(
-      (d) => d?.tl?.[0]?.$?.c === "S2"
-    );
+      try {
+        const response = await axios.get(url, {
+          headers: {
+            "DB-Client-Id": process.env.DB_CLIENT_ID,
+            "DB-Client-Secret": process.env.DB_CLIENT_SECRET,
+            Accept: "application/xml",
+          },
+          timeout: 10000,
+        });
 
-    if (!s2) {
-      return res.json({
-        station: "Feldkirchen (b München)",
-        message: "Keine S2 in dieser Stunde gefunden",
-      });
+        const parsed = await parseStringPromise(response.data);
+        const departures = parsed?.timetable?.dp || [];
+
+        const s2 = departures.find(
+          (d) => d?.tl?.[0]?.$?.c === "S2"
+        );
+
+        if (s2) {
+          return res.json({
+            station: "Feldkirchen (b München)",
+            line: "S2",
+            direction: s2.dir?.[0] || "unbekannt",
+            plannedTime: s2.dpTime?.[0] || "??",
+          });
+        }
+      } catch (e) {
+        // 404 ignorieren → nächste Stunde probieren
+        if (e.response?.status !== 404) {
+          throw e;
+        }
+      }
     }
 
     res.json({
       station: "Feldkirchen (b München)",
-      line: "S2",
-      direction: s2.dir?.[0] || "unbekannt",
-      plannedTime: s2.dpTime?.[0] || "??",
+      message: "Keine S2 in nächster Zeit gefunden",
     });
   } catch (error) {
-    console.error("DB API FEHLER:");
-    console.error(error.message);
-
+    console.error("DB API FEHLER:", error.message);
     res.status(500).json({
       error: "DB API Fehler",
       details: error.message,
     });
   }
-});
-
-// ========= START =========
-app.listen(PORT, () => {
-  console.log(`Mini-Service läuft auf Port ${PORT}`);
 });
